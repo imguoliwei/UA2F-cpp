@@ -10,10 +10,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <functional>
 extern "C" {
 #include <unistd.h>
-#include <sys/wait.h>
 #include <syslog.h>
+#include <sys/wait.h>
 #include <arpa/inet.h>
 #include <net/ethernet.h>
 #include <libmnl/libmnl.h>
@@ -31,6 +32,7 @@ constexpr char UA_PADDING = 'F';
 constexpr char UA_STR[] = "XiaoYuanWang/2.1";
 constexpr size_t UA_STR_LENGTH = sizeof(UA_STR) - 1;
 using std::unique_ptr;
+using std::function;
 
 static int child_status;
 static mnl_socket *nl;
@@ -146,7 +148,6 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
     }
 
     ++currStatus.tcpCount;
-    pktb_free(pktb);
 }
 
 static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayload, const unsigned int tcpPkLen, pkt_buff *const pktb, const bool isIPv4, UA2F_status& currStatus) {
@@ -202,7 +203,7 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
 
     if (attr[NFQA_CT] != nullptr) {
         mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctAttr);
-        if (ctAttr[CTA_MARK]) {
+        if (ctAttr[CTA_MARK] != nullptr) {
             mark = ntohl(mnl_attr_get_u32(ctAttr[CTA_MARK]));
         } else {
             mark = 1; // no mark 1
@@ -221,40 +222,43 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
 
     static UA2F_status IPv4Status, IPv6Status;
     auto& currStatus = isIPv4 ? IPv4Status : IPv6Status;
-    auto const pktb = pktb_alloc(isIPv4 ? AF_INET : AF_INET6, payload, pLen, 0); //IP包
+    unique_ptr<pkt_buff, function<void(pkt_buff*)>> pktb {
+        pktb_alloc(isIPv4 ? AF_INET : AF_INET6, payload, pLen, 0), //IP包
+        [](pkt_buff * const p){
+            if(p != nullptr) pktb_free(p);
+        }
+    };
 
     if (pktb == nullptr) {
         syslog(LOG_ERR, "pktb malloc failed");
         return MNL_CB_ERROR;
     }
-    auto const ipPkHdl = nfq_ip_get_hdr(pktb); //获取IP header
-    auto const ip6PkHdl = nfq_ip6_get_hdr(pktb); //获取IPv6 header
+    auto const ipPkHdl = nfq_ip_get_hdr(pktb.get()); //获取IP header
+    auto const ip6PkHdl = nfq_ip6_get_hdr(pktb.get()); //获取IPv6 header
     const bool nfq_ip_set_transport_header_succeed = isIPv4 ?
-            (nfq_ip_set_transport_header(pktb, ipPkHdl) == 0) :
-            (nfq_ip6_set_transport_header(pktb, ip6PkHdl, IPPROTO_TCP) == 1);
+            (nfq_ip_set_transport_header(pktb.get(), ipPkHdl) == 0) :
+            (nfq_ip6_set_transport_header(pktb.get(), ip6PkHdl, IPPROTO_TCP) == 1);
     if (!nfq_ip_set_transport_header_succeed) {
         syslog(LOG_ERR, "set transport header failed");
-        pktb_free(pktb);
         return MNL_CB_ERROR;
     }
 
-    auto const tcpPkHdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
+    auto const tcpPkHdl = nfq_tcp_get_hdr(pktb.get()); //获取 tcp header
     if(tcpPkHdl == nullptr){
         syslog(LOG_ERR, "Transport Layer Error");
-        pktb_free(pktb);
         return MNL_CB_ERROR;
     }
-    auto const tcpPkPayload = static_cast<const char*>(nfq_tcp_get_payload(tcpPkHdl, pktb)); //获取 tcp载荷
+    auto const tcpPkPayload = static_cast<const char*>(nfq_tcp_get_payload(tcpPkHdl, pktb.get())); //获取 tcp载荷
     if (tcpPkPayload != nullptr) {
-        auto const tcpPkLen = nfq_tcp_get_payload_len(tcpPkHdl, pktb); //获取 tcp长度
+        auto const tcpPkLen = nfq_tcp_get_payload_len(tcpPkHdl, pktb.get()); //获取 tcp长度
         const char * const uaPointer = strNCaseStr(tcpPkPayload, tcpPkLen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
-        if (uaPointer) {
-            modify_ua(uaPointer, tcpPkPayload, tcpPkLen, pktb, isIPv4, currStatus) ? ++currStatus.uaCount : 0;
+        if (uaPointer != nullptr) {
+            modify_ua(uaPointer, tcpPkPayload, tcpPkLen, pktb.get(), isIPv4, currStatus) ? ++currStatus.uaCount : 0;
         } else {
             noUA = true;
         }
     }
-    nfq_send_verdict(ntohs(nfg->res_id), ntohl(static_cast<uint32_t>(ph->packet_id)), pktb, mark, noUA, currStatus);
+    nfq_send_verdict(ntohs(nfg->res_id), ntohl(static_cast<uint32_t>(ph->packet_id)), pktb.get(), mark, noUA, currStatus);
 
     if (currStatus.shouldPrint()) {
         currStatus.increaseCounter();
