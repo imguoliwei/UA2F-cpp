@@ -31,6 +31,7 @@ extern "C" {
 constexpr char UA_PADDING = 'F';
 constexpr char UA_STR[] = "XiaoYuanWang/2.1";
 constexpr size_t UA_STR_LENGTH = sizeof(UA_STR) - 1;
+const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE >> 1);
 using std::unique_ptr;
 using std::function;
 
@@ -102,7 +103,7 @@ static int parse_attrs(const nlattr * const attr, void * const data) {
 
 // http mark = 24, ukn mark = 16-20, no http mark = 23
 static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * const pktb, const uint32_t mark, const bool noUA, UA2F_status& currStatus) {
-    char buf[MNL_SOCKET_BUFFER_SIZE];
+    char buf[sizeof_buf];
     nlattr *nest;
 
     auto const nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
@@ -286,7 +287,6 @@ int main(const int argc, const char * const * const argv) {
         printf("UA2F Usage: %s queue_number\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-    const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE >> 1);
     const int queue_number = atoi(argv[1]);
     printf("Current queue_number is %d\n", queue_number);
     signal(SIGTERM, killChild);
