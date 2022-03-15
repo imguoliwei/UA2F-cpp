@@ -71,10 +71,10 @@ static char* strNCaseStr(const char * const s1, const size_t n1, const char * co
     /* the last position where its possible to find "s2" in "s1" */
     const char * const last = s1 + n1 - n2;
 
-    for (const char *cur = s1; cur <= last; ++cur)
+    for (const char *cur = s1; cur <= last; ++cur){
         if (*cur == *s2 && strncasecmp(cur, s2, n2) == 0)
             return const_cast<char*>(cur);
-
+    }
     return nullptr;
 }
 
@@ -104,7 +104,6 @@ static int parse_attrs(const nlattr * const attr, void * const data) {
 // http mark = 24, ukn mark = 16-20, no http mark = 23
 static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * const pktb, const uint32_t mark, const bool noUA, UA2F_status& currStatus) {
     char buf[sizeof_buf];
-    nlattr *nest;
 
     auto const nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
     nfq_nlmsg_verdict_put(nlh, id, NF_ACCEPT);
@@ -113,34 +112,32 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
+    auto const nest = mnl_attr_nest_start(nlh, NFQA_CT);
     if (noUA) {
-        if (mark == 1) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
-            mnl_attr_nest_end(nlh, nest);
-        }
-
-        if (mark >= 16 && mark <= 40) {
-            auto const setmark = mark + 1;
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
-            mnl_attr_nest_end(nlh, nest);
-        }
-
-        if (mark == 41) { // 21 统计确定此连接为不含UA连接
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
-            mnl_attr_nest_end(nlh, nest); // 加 CONNMARK
-            ++currStatus.noUAMark;
+        switch (mark) {
+            case 1:
+                mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
+                break;
+            case 16 ... 40:
+                {
+                    auto const setmark = mark + 1;
+                    mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
+                }
+                break;
+            case 41:
+                mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
+                ++currStatus.noUAMark;
+                break;
+            default:
+                break;
         }
     } else {
         if (mark != 44) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
-            mnl_attr_nest_end(nlh, nest);
             ++currStatus.uaMark;
         }
     }
+    mnl_attr_nest_end(nlh, nest);
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
@@ -190,7 +187,7 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
     uint32_t mark = 0;
     bool noUA = false;
 
-    if (nfq_nlmsg_parse(nlh, attr) < 0) {
+    if (nfq_nlmsg_parse(nlh, attr) == MNL_CB_ERROR) {
         perror("problems parsing");
         return MNL_CB_ERROR;
     }
