@@ -12,9 +12,21 @@ ua2f-mix.cpp可以同时处理IPv4和IPv6，本人现在主要运行维护ua2f-m
 
 ## 编译
 
+### 通用操作系统用户
+
 ```bash
 g++ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
 ```
+
+### OpenWrt用户参考命令
+
+```bash
+../../staging_dir/toolchain-x86_64_gcc-8.4.0_musl/bin/x86_64-openwrt-linux-g++ -I ../../staging_dir/target-x86_64_musl/usr/include/ -L ../../staging_dir/target-x86_64_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+```
+
+OpenWrt用户运行程序前请确保你安装了以下依赖
+
+iptables-mod-conntrack-extra, iptables-mod-nfqueue, libnetfilter-conntrack, libnetfilter-queue,  libstdcpp
 
 ## nftables 配置
 
@@ -32,6 +44,30 @@ g++ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
 		counter queue num 10010-10013 fanout
 	}
 ```
+
+mark set mark or 0x10 用于[rkp-ipid](https://github.com/CHN-beta/rkp-ipid)，meta mark与ct mark相互独立。
+
+## iptables参考配置
+
+```bash
+iptables -t mangle -N ua2f
+iptables -t mangle -A ua2f -m connmark --mark 43 -j RETURN
+iptables -t mangle -A ua2f -p tcp -m multiport --dports 22,443 -j RETURN
+iptables -t mangle -A ua2f -j NFQUEUE --queue-balance 10010:10013
+iptables -t mangle -A POSTROUTING -o pppoe-wan -p tcp -j ua2f
+
+ip6tables -t mangle -N ua2f
+ip6tables -t mangle -A ua2f -m connmark --mark 43 -j RETURN
+ip6tables -t mangle -A ua2f -p tcp -m multiport --dports 22,443 -j RETURN
+ip6tables -t mangle -A ua2f -j NFQUEUE --queue-balance 10010:10013
+ip6tables -t mangle -A POSTROUTING -o pppoe-wan -p tcp -j ua2f
+```
+
+UA2F是否处理一个数据包仅与是否执行了NFQUEUE有关，与connmark无关。
+
+如果UA2F发现某个连接存在UA，会将其connmark设置为44。如果你认为某个连接肯定存在UA，也可以手动将其connmark设置为44。UA2F不会将值为44的connmark设置为其他值。
+
+如果UA2F认为某个连接不存在UA，会将其connmark设置为43。你可以直接放行connmark为43的数据包。
 
 ## Systemd配置
 
