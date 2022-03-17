@@ -8,6 +8,8 @@ ua2f.cpp写得相对早，IPv4和IPv6的版本写在一个cpp文件，默认编�
 
 ua2f-mix.cpp可以同时处理IPv4和IPv6，本人现在主要运行维护ua2f-mix.cpp。
 
+ua2f-mix.cpp添加了清除TCP Timestamps的实验功能，该功能默认不启动，你可以将CLEAR_TCP_TIMESTAMPS设置为true来试用。
+
 你需要在运行程序时在第1个参数指定需要处理的queue_number，因此你可以同时运行多个实例，在路由器配置足够高的情况下加快处理速度。
 
 ## 编译

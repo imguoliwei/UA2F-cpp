@@ -10,12 +10,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <functional>
 extern "C" {
 #include <unistd.h>
 #include <syslog.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <net/ethernet.h>
 #include <libmnl/libmnl.h>
 #include <linux/netfilter.h>
@@ -31,6 +33,7 @@ extern "C" {
 constexpr char UA_PADDING = 'F';
 constexpr char UA_STR[] = "XiaoYuanWang/2.1";
 constexpr size_t UA_STR_LENGTH = sizeof(UA_STR) - 1;
+constexpr bool CLEAR_TCP_TIMESTAMPS = false;
 const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE >> 1);
 using std::unique_ptr;
 using std::function;
@@ -57,6 +60,35 @@ public:
     }
 private:
     long long httpCount = 1;
+};
+
+class TcpOptionsScanner {
+public:
+    explicit TcpOptionsScanner(const tcphdr * const tcpPkHdl) :
+    tcpOptionsStart(reinterpret_cast<const char*>(tcpPkHdl) + sizeof(tcphdr)),
+    curr(tcpOptionsStart),
+    bound(reinterpret_cast<const char*>(tcpPkHdl) + tcpPkHdl->doff * 4)
+    {}
+
+    [[nodiscard]] bool hasNext() const { return curr < bound; }
+
+    void next(){
+        if(!hasNext()) throw std::out_of_range("TcpOptionsScanner out of bound");
+        if(*curr == TCPOPT_NOP){
+            ++curr;
+        } else {
+            curr += curr[1];
+        }
+    }
+
+    [[nodiscard]] const char * getCurrOption() const {
+        return curr;
+    }
+
+private:
+    const char * const tcpOptionsStart;
+    const char * curr;
+    const char * const bound;
 };
 
 static char* strNCaseStr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) {
@@ -146,6 +178,44 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
     }
 
     ++currStatus.tcpCount;
+}
+
+static bool clearTcpTimestamps(tcphdr *const tcpPkHdl, pkt_buff *const pktb, const bool isIPv4){
+    if(tcpPkHdl->doff * 4 == sizeof(tcphdr)) return false;
+    TcpOptionsScanner optScanner(tcpPkHdl);
+    while (optScanner.hasNext()){
+        auto const curr = optScanner.getCurrOption();
+        if(*curr == TCPOPT_TIMESTAMP){
+            auto const ipPkHdl = nfq_ip_get_hdr(pktb);
+            auto const ip6PkHdl = nfq_ip6_get_hdr(pktb);
+            const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
+                    isIPv4 ?
+                    reinterpret_cast<const char*>(ipPkHdl) :
+                    reinterpret_cast<const char*>(ip6PkHdl)
+                    );
+            const unsigned int matchOffset = curr - reinterpret_cast<const char*>(tcpPkHdl);
+            char padding[TCPOLEN_TIMESTAMP];
+            memset(padding, TCPOPT_NOP, TCPOLEN_TIMESTAMP);
+            const bool nfq_tcp_mangle_succeed = (
+                    isIPv4 ?
+                    nfq_ip_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP) :
+                    nfq_ip6_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP)
+                    ) == 1;
+            if(nfq_tcp_mangle_succeed){
+                if(isIPv4){
+                    nfq_tcp_compute_checksum_ipv4(tcpPkHdl, ipPkHdl);
+                } else {
+                    nfq_tcp_compute_checksum_ipv6(tcpPkHdl, ip6PkHdl);
+                }
+                return true;
+            } else {
+                syslog(LOG_ERR, "failed at clearTcpTimestamps.");
+                return false;
+            }
+        }
+        optScanner.next();
+    }
+    return false;
 }
 
 static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayload, const unsigned int tcpPkLen, pkt_buff *const pktb, const bool isIPv4, UA2F_status& currStatus) {
@@ -256,6 +326,7 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
             noUA = true;
         }
     }
+    if(CLEAR_TCP_TIMESTAMPS) clearTcpTimestamps(tcpPkHdl, pktb.get(), isIPv4);
     nfq_send_verdict(ntohs(nfg->res_id), ntohl(static_cast<uint32_t>(ph->packet_id)), pktb.get(), mark, noUA, currStatus);
 
     if (currStatus.shouldPrint()) {
