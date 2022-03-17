@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <stdexcept>
+#include <variant>
 #include <functional>
 extern "C" {
 #include <unistd.h>
@@ -37,6 +37,8 @@ constexpr bool CLEAR_TCP_TIMESTAMPS = false;
 const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE >> 1);
 using std::unique_ptr;
 using std::function;
+using std::variant;
+using std::get;
 
 static int child_status;
 static mnl_socket *nl;
@@ -186,12 +188,16 @@ static bool clearTcpTimestamps(tcphdr *const tcpPkHdl, pkt_buff *const pktb, con
     while (optScanner.hasNext()){
         auto const curr = optScanner.getCurrOption();
         if(*curr == TCPOPT_TIMESTAMP){
-            auto const ipPkHdl = nfq_ip_get_hdr(pktb);
-            auto const ip6PkHdl = nfq_ip6_get_hdr(pktb);
+            variant<iphdr*, ip6_hdr*> ipPkHdl;
+            if(isIPv4){
+                ipPkHdl = nfq_ip_get_hdr(pktb);
+            } else {
+                ipPkHdl = nfq_ip6_get_hdr(pktb);
+            }
             const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
                     isIPv4 ?
-                    reinterpret_cast<const char*>(ipPkHdl) :
-                    reinterpret_cast<const char*>(ip6PkHdl)
+                    reinterpret_cast<const char*>(get<iphdr*>(ipPkHdl)) :
+                    reinterpret_cast<const char*>(get<ip6_hdr*>(ipPkHdl))
                     );
             const unsigned int matchOffset = curr - reinterpret_cast<const char*>(tcpPkHdl);
             char padding[TCPOLEN_TIMESTAMP];
@@ -203,9 +209,9 @@ static bool clearTcpTimestamps(tcphdr *const tcpPkHdl, pkt_buff *const pktb, con
                     ) == 1;
             if(nfq_tcp_mangle_succeed){
                 if(isIPv4){
-                    nfq_tcp_compute_checksum_ipv4(tcpPkHdl, ipPkHdl);
+                    nfq_tcp_compute_checksum_ipv4(tcpPkHdl, get<iphdr*>(ipPkHdl));
                 } else {
-                    nfq_tcp_compute_checksum_ipv6(tcpPkHdl, ip6PkHdl);
+                    nfq_tcp_compute_checksum_ipv6(tcpPkHdl, get<ip6_hdr*>(ipPkHdl));
                 }
                 return true;
             } else {
@@ -301,11 +307,17 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
         syslog(LOG_ERR, "pktb malloc failed");
         return MNL_CB_ERROR;
     }
-    auto const ipPkHdl = nfq_ip_get_hdr(pktb.get()); //获取IP header
-    auto const ip6PkHdl = nfq_ip6_get_hdr(pktb.get()); //获取IPv6 header
+    //auto const ipPkHdl = nfq_ip_get_hdr(pktb.get()); //获取IP header
+    //auto const ip6PkHdl = nfq_ip6_get_hdr(pktb.get()); //获取IPv6 header
+    variant<iphdr*, ip6_hdr*> ipPkHdl;
+    if(isIPv4){
+        ipPkHdl = nfq_ip_get_hdr(pktb.get());
+    } else {
+        ipPkHdl = nfq_ip6_get_hdr(pktb.get());
+    }
     const bool nfq_ip_set_transport_header_succeed = isIPv4 ?
-            (nfq_ip_set_transport_header(pktb.get(), ipPkHdl) == 0) :
-            (nfq_ip6_set_transport_header(pktb.get(), ip6PkHdl, IPPROTO_TCP) == 1);
+            (nfq_ip_set_transport_header(pktb.get(), get<iphdr*>(ipPkHdl)) == 0) :
+            (nfq_ip6_set_transport_header(pktb.get(), get<ip6_hdr*>(ipPkHdl), IPPROTO_TCP) == 1);
     if (!nfq_ip_set_transport_header_succeed) {
         syslog(LOG_ERR, "set transport header failed");
         return MNL_CB_ERROR;

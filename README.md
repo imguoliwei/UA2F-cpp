@@ -17,7 +17,7 @@ ua2f-mix.cpp添加了清除TCP Timestamps的实验功能，该功能默认不启
 ### 通用操作系统用户
 
 ```bash
-g++ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
+g++ -std=c++20 -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
 ```
 
 ### OpenWrt用户参考命令
