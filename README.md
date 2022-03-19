@@ -20,10 +20,12 @@ ua2f-mix.cpp添加了清除TCP Timestamps的实验功能，该功能默认不启
 g++ -std=c++20 -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
 ```
 
+请确保你的libnetfilter-queue-dev版本至少为1.0.5-2，否则编译可能出错
+
 ### OpenWrt用户参考命令
 
 ```bash
-../../staging_dir/toolchain-x86_64_gcc-8.4.0_musl/bin/x86_64-openwrt-linux-g++ -I ../../staging_dir/target-x86_64_musl/usr/include/ -L ../../staging_dir/target-x86_64_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+../../staging_dir/toolchain-x86_64_gcc-8.4.0_musl/bin/x86_64-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-x86_64_musl/usr/include/ -L ../../staging_dir/target-x86_64_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
 ```
 
 OpenWrt用户运行程序前请确保你安装了以下依赖

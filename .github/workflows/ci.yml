@@ -1,0 +1,174 @@
+name: C/C++ CI
+
+on:
+  push:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Get current time
+        uses: 1466587594/get-current-time@v2
+        id: current-time
+        with:
+          format: YYYYMMDDTHHmmss
+          utcOffset: "+08:00"
+
+      - name: Compile Package Linux
+        run: |
+          sudo apt-fast update
+          sudo apt-fast -y install libmnl-dev libnfnetlink-dev
+          wget https://deb.debian.org/debian/pool/main/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-2_amd64.deb
+          wget https://deb.debian.org/debian/pool/main/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-2_amd64.deb
+          sudo dpkg -i libnetfilter-queue1_1.0.5-2_amd64.deb
+          sudo dpkg -i libnetfilter-queue-dev_1.0.5-2_amd64.deb
+          rm libnetfilter-queue1_1.0.5-2_amd64.deb
+          rm libnetfilter-queue-dev_1.0.5-2_amd64.deb
+          mkdir release
+          cd release
+          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          g++ -std=c++17 -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
+          mv ua2f-mix ua2f-mix-linux-64
+          rm ua2f-mix.cpp
+          cd ..
+
+      - name: Setup Environment
+        run: |
+          sudo apt-fast -y install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 python2.7 unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-multilib antlr3 gperf wget curl swig rsync
+
+
+
+
+      - name: Setup OpenWRT SDK aarch64_generic
+        run: |
+          wget https://downloads.openwrt.org/releases/21.02.2/targets/rockchip/armv8/openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          tar -xvJf openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          cd openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Compile Package aarch64_generic
+        working-directory: ./openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64
+        run: |
+          cd package
+          if [ -d UA2F ]; then rm -rf ./UA2F; fi
+          git clone https://github.com/Zxilly/UA2F.git
+          cd ..
+          make defconfig
+          make package/UA2F/compile -j8 V=s
+          cd package/UA2F
+          rm -rf *
+          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          ../../staging_dir/toolchain-aarch64_generic_gcc-8.4.0_musl/bin/aarch64-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-aarch64_generic_musl/usr/include/ -L ../../staging_dir/target-aarch64_generic_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+          cp ua2f-mix ../../../release/ua2f-mix-aarch64_generic-openwrt-linux
+          cd ../../..
+          rm -rf openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64
+
+
+
+
+      - name: Setup OpenWRT SDK mipsel_24kc
+        run: |
+          wget https://downloads.openwrt.org/releases/21.02.2/targets/ramips/mt7620/openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          tar -xvJf openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          cd openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Compile Package mipsel_24kc
+        working-directory: ./openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64
+        run: |
+          cd package
+          if [ -d UA2F ]; then rm -rf ./UA2F; fi
+          git clone https://github.com/Zxilly/UA2F.git
+          cd ..
+          make defconfig
+          make package/UA2F/compile -j8 V=s
+          cd package/UA2F
+          rm -rf *
+          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          ../../staging_dir/toolchain-mipsel_24kc_gcc-8.4.0_musl/bin/mipsel-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-mipsel_24kc_musl/usr/include/ -L ../../staging_dir/target-mipsel_24kc_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+          cp ua2f-mix ../../../release/ua2f-mix-mipsel_24kc-openwrt-linux
+          cd ../../..
+          rm -rf openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64
+
+
+
+
+
+      - name: Setup OpenWRT SDK arm_cortex-a7+neon-vfpv4
+        run: |
+          wget https://downloads.openwrt.org/releases/21.02.2/targets/ipq40xx/generic/openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64.tar.xz
+          tar -xvJf openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64.tar.xz
+          cd openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Compile Package arm_cortex-a7+neon-vfpv4
+        working-directory: ./openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64
+        run: |
+          cd package
+          if [ -d UA2F ]; then rm -rf ./UA2F; fi
+          git clone https://github.com/Zxilly/UA2F.git
+          cd ..
+          make defconfig
+          make package/UA2F/compile -j8 V=s
+          cd package/UA2F
+          rm -rf *
+          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          ../../staging_dir/toolchain-arm_cortex-a7+neon-vfpv4_gcc-8.4.0_musl_eabi/bin/arm-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/usr/include/ -L ../../staging_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+          cp ua2f-mix ../../../release/ua2f-mix-arm_cortex-a7_neon-vfpv4-openwrt-linux
+          cd ../../..
+          rm -rf openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64
+
+
+
+
+
+
+
+
+      - name: Setup OpenWRT SDK x86_64
+        run: |
+          wget https://downloads.openwrt.org/releases/21.02.2/targets/x86/64/openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          tar -xvJf openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          cd openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Compile Package x86_64
+        working-directory: ./openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64
+        run: |
+          cd package
+          if [ -d UA2F ]; then rm -rf ./UA2F; fi
+          git clone https://github.com/Zxilly/UA2F.git
+          cd ..
+          make defconfig
+          make package/UA2F/compile -j8 V=s
+          cd package/UA2F
+          rm -rf *
+          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          ../../staging_dir/toolchain-x86_64_gcc-8.4.0_musl/bin/x86_64-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-x86_64_musl/usr/include/ -L ../../staging_dir/target-x86_64_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink
+          cp ua2f-mix ../../../release/ua2f-mix-x86_64-openwrt-linux
+          cd ../../..
+          rm -rf openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64
+
+
+
+
+
+      - name: Release Package
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "${{ steps.current-time.outputs.formattedTime }}"
+          prerelease: true
+          files: |
+            release/*
+
+
+
+
