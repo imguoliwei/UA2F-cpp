@@ -1,16 +1,9 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
-#ifndef __USE_GNU
-#define __USE_GNU
-#endif
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <variant>
+#include <iostream>
 #include <functional>
 extern "C" {
 #include <unistd.h>
@@ -30,21 +23,23 @@ extern "C" {
 #include <libnetfilter_queue/pktbuff.h>
 }
 
-constexpr char UA_PADDING = 'F';
-constexpr char UA_STR[] = "XiaoYuanWang/2.1";
+constexpr char UA_PADDING = ' ';
+constexpr char UA_STR[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0";
 constexpr size_t UA_STR_LENGTH = sizeof(UA_STR) - 1;
-constexpr bool CLEAR_TCP_TIMESTAMPS = false;
-const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE >> 1);
+const size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
 using std::unique_ptr;
 using std::function;
 using std::variant;
 using std::get;
+using std::cout;
+using std::endl;
 
 static int child_status;
 static mnl_socket *nl;
 static time_t start_t;
 static char timeStr[60];
 static unique_ptr<char[]> str;
+static bool enableClearTcpTimestamps = false;
 
 class UA2F_status{
 public:
@@ -52,10 +47,11 @@ public:
     long long uaMark = 0;
     long long noUAMark = 0;
     long long uaCount = 0;
+    long long timestamps = 0;
     int uaEmpty = 0;
     int uaFrag = 0;
     [[nodiscard]] bool shouldPrint() const {
-        return uaCount == (httpCount << 1) || uaCount - httpCount >= 8192;
+        return uaCount == httpCount * 2 || uaCount - httpCount >= 8192;
     }
     void increaseCounter() {
         httpCount = uaCount;
@@ -93,7 +89,7 @@ private:
     const char * const bound;
 };
 
-static char* strNCaseStr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) {
+static const char* strNCaseStr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) {
     /* we need something to compare */
     if (n1 == 0 || n2 == 0)
         return nullptr;
@@ -107,7 +103,7 @@ static char* strNCaseStr(const char * const s1, const size_t n1, const char * co
 
     for (const char *cur = s1; cur <= last; ++cur){
         if (*cur == *s2 && strncasecmp(cur, s2, n2) == 0)
-            return const_cast<char*>(cur);
+            return cur;
     }
     return nullptr;
 }
@@ -138,32 +134,22 @@ static int parse_attrs(const nlattr * const attr, void * const data) {
 // http mark = 24, ukn mark = 16-20, no http mark = 23
 static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * const pktb, const uint32_t mark, const bool noUA, UA2F_status& currStatus) {
     char buf[sizeof_buf];
-
     auto const nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
     nfq_nlmsg_verdict_put(nlh, id, NF_ACCEPT);
-
     if (pktb_mangled(pktb)) {
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
     auto const nest = mnl_attr_nest_start(nlh, NFQA_CT);
     if (noUA) {
-        switch (mark) {
-            case 1:
-                mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
-                break;
-            case 16 ... 40:
-                {
-                    auto const setmark = mark + 1;
-                    mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
-                }
-                break;
-            case 41:
-                mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
-                ++currStatus.noUAMark;
-                break;
-            default:
-                break;
+        if(mark == 1) {
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
+        } else if(mark >= 16 && mark <= 40) {
+            auto const setmark = mark + 1;
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
+        } else if(mark == 41) {
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
+            ++currStatus.noUAMark;
         }
     } else {
         if (mark != 44) {
@@ -182,44 +168,34 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
     ++currStatus.tcpCount;
 }
 
-static bool clearTcpTimestamps(tcphdr *const tcpPkHdl, pkt_buff *const pktb, const bool isIPv4){
+static bool clearTcpTimestamps(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4){
     if(tcpPkHdl->doff * 4 == sizeof(tcphdr)) return false;
-    TcpOptionsScanner optScanner(tcpPkHdl);
-    while (optScanner.hasNext()){
+    for(TcpOptionsScanner optScanner(tcpPkHdl); optScanner.hasNext(); optScanner.next()){
         auto const curr = optScanner.getCurrOption();
-        if(*curr == TCPOPT_TIMESTAMP){
-            variant<iphdr*, ip6_hdr*> ipPkHdl;
-            if(isIPv4){
-                ipPkHdl = nfq_ip_get_hdr(pktb);
-            } else {
-                ipPkHdl = nfq_ip6_get_hdr(pktb);
-            }
-            const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
-                    isIPv4 ?
-                    reinterpret_cast<const char*>(get<iphdr*>(ipPkHdl)) :
-                    reinterpret_cast<const char*>(get<ip6_hdr*>(ipPkHdl))
-                    );
-            const unsigned int matchOffset = curr - reinterpret_cast<const char*>(tcpPkHdl);
-            char padding[TCPOLEN_TIMESTAMP];
-            memset(padding, TCPOPT_NOP, TCPOLEN_TIMESTAMP);
-            const bool nfq_tcp_mangle_succeed = (
-                    isIPv4 ?
-                    nfq_ip_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP) :
-                    nfq_ip6_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP)
-                    ) == 1;
-            if(nfq_tcp_mangle_succeed){
-                if(isIPv4){
-                    nfq_tcp_compute_checksum_ipv4(tcpPkHdl, get<iphdr*>(ipPkHdl));
-                } else {
-                    nfq_tcp_compute_checksum_ipv6(tcpPkHdl, get<ip6_hdr*>(ipPkHdl));
-                }
-                return true;
-            } else {
-                syslog(LOG_ERR, "failed at clearTcpTimestamps.");
-                return false;
-            }
+        if(*curr != TCPOPT_TIMESTAMP) continue;
+        const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
+                isIPv4 ?
+                reinterpret_cast<const char*>(get<iphdr*>(ipPkHdl)) :
+                reinterpret_cast<const char*>(get<ip6_hdr*>(ipPkHdl))
+                );
+        const unsigned int matchOffset = curr - reinterpret_cast<const char*>(tcpPkHdl);
+        static const char padding[TCPOLEN_TIMESTAMP] = { TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP,
+                                                         TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP, TCPOPT_NOP };
+        const bool nfq_tcp_mangle_succeed = (
+                isIPv4 ?
+                nfq_ip_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP) :
+                nfq_ip6_mangle(pktb, dataOffset, matchOffset, TCPOLEN_TIMESTAMP, padding, TCPOLEN_TIMESTAMP)
+                ) == 1;
+        if(!nfq_tcp_mangle_succeed){
+            syslog(LOG_ERR, "failed at clearTcpTimestamps.");
+            return false;
         }
-        optScanner.next();
+        if(isIPv4){
+            nfq_tcp_compute_checksum_ipv4(tcpPkHdl, get<iphdr*>(ipPkHdl));
+        } else {
+            nfq_tcp_compute_checksum_ipv6(tcpPkHdl, get<ip6_hdr*>(ipPkHdl));
+        }
+        return true;
     }
     return false;
 }
@@ -235,7 +211,7 @@ static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayloa
     const char * const uaStartPointer = uaPointer + 14;
     const unsigned int uaLengthBound = tcpPkLen - uaOffset;
     for (unsigned int i = 0; i < uaLengthBound; ++i) {
-        if (*(uaStartPointer + i) == '\r') {
+        if (uaStartPointer[i] == '\r') {
             uaLength = i;
             break;
         }
@@ -250,6 +226,7 @@ static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayloa
             nfq_tcp_mangle_ipv6(pktb, uaOffset, uaLength, str.get(), uaLength)
             ) == 1;
     if (nfq_tcp_mangle_succeed) {
+        ++currStatus.uaCount;
         return true;
     } else {
         syslog(LOG_ERR, "Mangle packet failed.");
@@ -259,23 +236,18 @@ static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayloa
 
 static int queue_cb(const nlmsghdr * const nlh, void * const) {
     nlattr *attr[NFQA_MAX + 1] = {};
-    nlattr *ctAttr[CTA_MAX + 1] = {};
-    uint32_t mark = 0;
-    bool noUA = false;
-
     if (nfq_nlmsg_parse(nlh, attr) == MNL_CB_ERROR) {
         perror("problems parsing");
         return MNL_CB_ERROR;
     }
-
-    auto const nfg = static_cast<const nfgenmsg*>(mnl_nlmsg_get_payload(nlh));
-
     if (attr[NFQA_PACKET_HDR] == nullptr) {
         syslog(LOG_ERR, "metaheader not set");
         return MNL_CB_ERROR;
     }
 
+    uint32_t mark = 0;
     if (attr[NFQA_CT] != nullptr) {
+        nlattr *ctAttr[CTA_MAX + 1] = {};
         mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctAttr);
         if (ctAttr[CTA_MARK] != nullptr) {
             mark = ntohl(mnl_attr_get_u32(ctAttr[CTA_MARK]));
@@ -294,27 +266,22 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
         return MNL_CB_ERROR;
     }
 
-    static UA2F_status IPv4Status, IPv6Status;
-    auto& currStatus = isIPv4 ? IPv4Status : IPv6Status;
-    unique_ptr<pkt_buff, function<void(pkt_buff*)>> pktb {
+    const unique_ptr<pkt_buff, function<void(pkt_buff*)>> pktb {
         pktb_alloc(isIPv4 ? AF_INET : AF_INET6, payload, pLen, 0), //IP包
         [](pkt_buff * const p){
             if(p != nullptr) pktb_free(p);
         }
     };
-
     if (pktb == nullptr) {
         syslog(LOG_ERR, "pktb malloc failed");
         return MNL_CB_ERROR;
     }
-    //auto const ipPkHdl = nfq_ip_get_hdr(pktb.get()); //获取IP header
-    //auto const ip6PkHdl = nfq_ip6_get_hdr(pktb.get()); //获取IPv6 header
-    variant<iphdr*, ip6_hdr*> ipPkHdl;
-    if(isIPv4){
-        ipPkHdl = nfq_ip_get_hdr(pktb.get());
-    } else {
-        ipPkHdl = nfq_ip6_get_hdr(pktb.get());
-    }
+
+    const variant<iphdr*, ip6_hdr*> ipPkHdl {
+        isIPv4 ?
+        variant<iphdr*, ip6_hdr*> { nfq_ip_get_hdr(pktb.get()) } :
+        variant<iphdr*, ip6_hdr*> { nfq_ip6_get_hdr(pktb.get()) }
+    };
     const bool nfq_ip_set_transport_header_succeed = isIPv4 ?
             (nfq_ip_set_transport_header(pktb.get(), get<iphdr*>(ipPkHdl)) == 0) :
             (nfq_ip6_set_transport_header(pktb.get(), get<ip6_hdr*>(ipPkHdl), IPPROTO_TCP) == 1);
@@ -328,17 +295,26 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
         syslog(LOG_ERR, "Transport Layer Error");
         return MNL_CB_ERROR;
     }
+
+    static UA2F_status IPv4Status, IPv6Status;
+    auto& currStatus = isIPv4 ? IPv4Status : IPv6Status;
+    bool noUA = false;
     auto const tcpPkPayload = static_cast<const char*>(nfq_tcp_get_payload(tcpPkHdl, pktb.get())); //获取 tcp载荷
     if (tcpPkPayload != nullptr) {
         auto const tcpPkLen = nfq_tcp_get_payload_len(tcpPkHdl, pktb.get()); //获取 tcp长度
         const char * const uaPointer = strNCaseStr(tcpPkPayload, tcpPkLen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
         if (uaPointer != nullptr) {
-            modify_ua(uaPointer, tcpPkPayload, tcpPkLen, pktb.get(), isIPv4, currStatus) ? ++currStatus.uaCount : 0;
+            modify_ua(uaPointer, tcpPkPayload, tcpPkLen, pktb.get(), isIPv4, currStatus);
         } else {
             noUA = true;
         }
     }
-    if(CLEAR_TCP_TIMESTAMPS) clearTcpTimestamps(tcpPkHdl, pktb.get(), isIPv4);
+
+    if(enableClearTcpTimestamps){
+        clearTcpTimestamps(pktb.get(), ipPkHdl, tcpPkHdl, isIPv4) ? ++currStatus.timestamps : 0;
+    }
+
+    auto const nfg = static_cast<const nfgenmsg*>(mnl_nlmsg_get_payload(nlh));
     nfq_send_verdict(ntohs(nfg->res_id), ntohl(static_cast<uint32_t>(ph->packet_id)), pktb.get(), mark, noUA, currStatus);
 
     if (currStatus.shouldPrint()) {
@@ -346,10 +322,10 @@ static int queue_cb(const nlmsghdr * const nlh, void * const) {
         const time_t current_t = time(nullptr);
         time2str(static_cast<int>(difftime(current_t, start_t)));
         auto const logStr = isIPv4 ?
-                "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s. There are %d empty and %d fragment. " :
-                "UA2F6 has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s. There are %d empty and %d fragment. ";
+                "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s. There are %d empty and %d fragment. Clear %lld TCP Timestamps" :
+                "UA2F6 has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s. There are %d empty and %d fragment. Clear %lld TCP Timestamps";
         syslog(LOG_INFO, logStr,
-               currStatus.uaCount, currStatus.tcpCount, currStatus.uaMark, currStatus.noUAMark, timeStr, currStatus.uaEmpty, currStatus.uaFrag);
+               currStatus.uaCount, currStatus.tcpCount, currStatus.uaMark, currStatus.noUAMark, timeStr, currStatus.uaEmpty, currStatus.uaFrag, currStatus.timestamps);
     }
 
     return MNL_CB_OK;
@@ -363,19 +339,29 @@ static void killChild(const int) {
 }
 
 int main(const int argc, const char * const * const argv) {
-    if(argc != 2){
-        printf("UA2F Usage: %s queue_number\n", argv[0]);
+    if(argc < 2){
+        cout << "UA2F Usage: " << argv[0] << " queue_number [--tcp-timestamps]" << endl;
         exit(EXIT_FAILURE);
     }
     const int queue_number = atoi(argv[1]);
-    printf("Current queue_number is %d\n", queue_number);
+    if(queue_number == 0){
+        cout << "Error queue_number" << endl;
+        exit(EXIT_FAILURE);
+    }
+    cout << "Current queue_number is " << queue_number << endl;
+    constexpr char arg2[] = "--tcp-timestamps";
+    constexpr size_t arg2Len = sizeof(arg2) - 1;
+    if(argc == 3 && strlen(argv[2]) == arg2Len && memcmp(argv[2], arg2, arg2Len) == 0){
+        enableClearTcpTimestamps = true;
+        cout << "enableClearTcpTimestamps" << endl;
+    }
     signal(SIGTERM, killChild);
 
     int errCount = 0;
     while (true) {
         child_status = fork();
         openlog("UA2F", LOG_CONS | LOG_PID, LOG_SYSLOG);
-        if (child_status < 0) {
+        if (child_status == -1) {
             syslog(LOG_ERR, "Failed to give birth.");
             syslog(LOG_ERR, "Exit at breakpoint 2.");
             exit(EXIT_FAILURE);
@@ -400,15 +386,11 @@ int main(const int argc, const char * const * const argv) {
     }
 
     start_t = time(nullptr);
-
-    nl = mnl_socket_open(NETLINK_NETFILTER);
-
-    if (nl == nullptr) {
+    if ((nl = mnl_socket_open(NETLINK_NETFILTER)) == nullptr) {
         perror("mnl_socket_open");
         syslog(LOG_ERR, "Exit at breakpoint 4.");
         exit(EXIT_FAILURE);
     }
-
     if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
         perror("mnl_socket_bind");
         syslog(LOG_ERR, "Exit at breakpoint 5.");
@@ -424,7 +406,6 @@ int main(const int argc, const char * const * const argv) {
     auto nlh = nfq_nlmsg_put(buf.get(), NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET6, NFQNL_CFG_CMD_BIND);
-
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 7.");
@@ -433,12 +414,10 @@ int main(const int argc, const char * const * const argv) {
 
     nlh = nfq_nlmsg_put(buf.get(), NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_params(nlh, NFQNL_COPY_PACKET, 0xffff);
-
     mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_FLAGS,
                            htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
     mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
                            htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
-
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 8.");

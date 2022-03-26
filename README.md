@@ -1,16 +1,14 @@
 UA2F-cpp是在[UA2F](https://github.com/Zxilly/UA2F)的基础上改写的，在此非常感谢[Zxilly](https://github.com/Zxilly/)做出的贡献。
 
-本项目添加了IPv6和多进程支持，删除了ipset，因此使用方法可能和[UA2F](https://github.com/Zxilly/UA2F)不一样。
+本项目支持IPv6、多进程运行和清除TCP Timestamps，删除了ipset，因此使用方法可能和[UA2F](https://github.com/Zxilly/UA2F)不一样。
 
 本人使用的x86软路由安装的是通用操作系统，而不是OpenWrt等嵌入式系统，默认的防火墙是nftables，本身就内置了set，不需要使用ipset，仅判断ct mark就足够了。
 
 ua2f.cpp写得相对早，IPv4和IPv6的版本写在一个cpp文件，默认编译IPv4，你可以定义SELECT_IPV6，这样就会编译IPv6的版本。每个版本只能处理一种网络层协议。
 
-ua2f-mix.cpp可以同时处理IPv4和IPv6，本人现在主要运行维护ua2f-mix.cpp。
+ua2f-mix.cpp可以同时处理IPv4和IPv6，清除TCP Timestamps，本人现在主要运行维护ua2f-mix.cpp。
 
-ua2f-mix.cpp添加了清除TCP Timestamps的实验功能，该功能默认不启动，你可以将CLEAR_TCP_TIMESTAMPS设置为true来试用。
-
-你需要在运行程序时在第1个参数指定需要处理的queue_number，因此你可以同时运行多个实例，在路由器配置足够高的情况下加快处理速度。
+你需要在运行程序时在第1个参数指定需要处理的queue_number，因此你可以同时运行多个实例，在路由器配置足够高的情况下加快处理速度。如果需要清除TCP Timestamps，设置第二个参数为--tcp-timestamps，并配置防火墙把所有存在Timestamps的TCP SYN交给UA2F处理。
 
 ## 编译
 
@@ -30,7 +28,7 @@ g++ -std=c++20 -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue
 
 OpenWrt用户运行程序前请确保你安装了以下依赖
 
-iptables-mod-conntrack-extra, iptables-mod-nfqueue, libnetfilter-conntrack, libnetfilter-queue,  libstdcpp
+iptables-mod-conntrack-extra iptables-mod-nfqueue libnetfilter-conntrack libnetfilter-queue libstdcpp
 
 ## nftables 配置
 
@@ -42,6 +40,7 @@ iptables-mod-conntrack-extra, iptables-mod-nfqueue, libnetfilter-conntrack, libn
 	}
 
 	chain ua2f {
+		tcp flags syn tcp option timestamp exists counter queue num 10010-10013 fanout
 		ct mark 43 counter return
 		meta l4proto != tcp counter return
 		tcp dport { ssh, https } counter return
@@ -98,7 +97,7 @@ ProtectKernelLogs=true
 MemoryDenyWriteExecute=true
 DynamicUser=true
 RemoveIPC=true
-ExecStart=/usr/bin/ua2f-mix %i
+ExecStart=/usr/bin/ua2f-mix %i --tcp-timestamps
 
 [Install]
 WantedBy=multi-user.target
