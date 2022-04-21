@@ -47,7 +47,6 @@ using std::thread;
 using std::atomic;
 using std::array;
 
-static int child_status;
 static bool enableMangleUa = false;
 static bool enableMangleUaBypass = false;
 static bool enableClearTcpTimestamps = false;
@@ -409,12 +408,6 @@ static int queue_cb(const nlmsghdr * const nlh, void * const data) {
     return MNL_CB_OK;
 }
 
-static void killChild(const int) {
-    syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
-    kill(child_status, SIGKILL); // Not graceful, but work
-    exit(EXIT_SUCCESS);
-}
-
 static void queue_accept(const int queue_number){
     const unique_ptr<mnl_socket, function<void(mnl_socket*)>> nl {
         mnl_socket_open(NETLINK_NETFILTER),
@@ -510,11 +503,9 @@ int main(const int argc, const char * const * const argv) {
     }
     cout << endl;
 
-    signal(SIGTERM, killChild);
-
     int errCount = 0;
     while (true) {
-        child_status = fork();
+        auto const child_status = fork();
         openlog("UA2F", LOG_CONS | LOG_PID, LOG_SYSLOG);
         if (child_status == -1) {
             syslog(LOG_ERR, "Failed to give birth.");
