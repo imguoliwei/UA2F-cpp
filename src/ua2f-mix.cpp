@@ -193,7 +193,7 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
         mnl_attr_nest_end(nlh, nest);
     }
 
-    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) == -1) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 1.");
         exit(EXIT_FAILURE);
@@ -420,7 +420,7 @@ static void queue_accept(const int queue_number){
         syslog(LOG_ERR, "Exit at breakpoint 4.");
         exit(EXIT_FAILURE);
     }
-    if (mnl_socket_bind(nl.get(), 0, MNL_SOCKET_AUTOPID) < 0) {
+    if (mnl_socket_bind(nl.get(), 0, MNL_SOCKET_AUTOPID) == -1) {
         perror("mnl_socket_bind");
         syslog(LOG_ERR, "Exit at breakpoint 5.");
         exit(EXIT_FAILURE);
@@ -431,7 +431,7 @@ static void queue_accept(const int queue_number){
     auto nlh = nfq_nlmsg_put(buf.get(), NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET6, NFQNL_CFG_CMD_BIND);
-    if (mnl_socket_sendto(nl.get(), nlh, nlh->nlmsg_len) < 0) {
+    if (mnl_socket_sendto(nl.get(), nlh, nlh->nlmsg_len) == -1) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 7.");
         exit(EXIT_FAILURE);
@@ -443,25 +443,25 @@ static void queue_accept(const int queue_number){
                            htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
     mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
                            htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
-    if (mnl_socket_sendto(nl.get(), nlh, nlh->nlmsg_len) < 0) {
+    if (mnl_socket_sendto(nl.get(), nlh, nlh->nlmsg_len) == -1) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 8.");
         exit(EXIT_FAILURE);
     }
 
-    ssize_t ret = 1;
-    mnl_socket_setsockopt(nl.get(), NETLINK_NO_ENOBUFS, &ret, sizeof(int));
+    int sockopt_buf = 1;
+    mnl_socket_setsockopt(nl.get(), NETLINK_NO_ENOBUFS, &sockopt_buf, sizeof(int));
     syslog(LOG_NOTICE, "UA2F %d has inited successful.", queue_number);
 
     while (true) {
-        ret = mnl_socket_recvfrom(nl.get(), buf.get(), sizeof_buf);
-        if (ret == -1) { //stop at failure
+        const ssize_t recvfrom_ret = mnl_socket_recvfrom(nl.get(), buf.get(), sizeof_buf);
+        if (recvfrom_ret == -1) { //stop at failure
             perror("mnl_socket_recvfrom");
             syslog(LOG_ERR, "Exit at breakpoint 9.");
             exit(EXIT_FAILURE);
         }
-        ret = mnl_cb_run(buf.get(), ret, 0, portid, queue_cb, nl.get());
-        if (ret < 0) { //stop at failure
+        const int cb_run_ret = mnl_cb_run(buf.get(), recvfrom_ret, 0, portid, queue_cb, nl.get());
+        if (cb_run_ret == MNL_CB_ERROR) { //stop at failure
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at breakpoint 10.");
             exit(EXIT_FAILURE);
@@ -517,7 +517,7 @@ int main(const int argc, const char * const * const argv) {
         } else {
             syslog(LOG_NOTICE, "Try to start UA2F processor at [%d].", child_status);
             int deadStat;
-            const int deadPid = wait(&deadStat);
+            auto const deadPid = wait(&deadStat);
             if (deadPid == -1) {
                 syslog(LOG_ERR, "Child suicide.");
             } else {
