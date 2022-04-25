@@ -1,23 +1,17 @@
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <memory>
 #include <atomic>
 #include <thread>
 #include <variant>
 #include <iostream>
 #include <functional>
 extern "C" {
-#include <unistd.h>
 #include <syslog.h>
 #include <sys/wait.h>
-#include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <net/ethernet.h>
 #include <libmnl/libmnl.h>
 #include <linux/netfilter.h>
-#include <linux/netfilter/nfnetlink_queue.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <libnetfilter_queue/libnetfilter_queue_tcp.h>
@@ -427,7 +421,7 @@ static void queue_accept(const int queue_number){
     }
     auto const portid = mnl_socket_get_portid(nl.get());
 
-    unique_ptr<char[]> buf {new char[sizeof_buf]};
+    const unique_ptr<char[]> buf {new char[sizeof_buf]};
     auto nlh = nfq_nlmsg_put(buf.get(), NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET6, NFQNL_CFG_CMD_BIND);
