@@ -79,7 +79,9 @@ public:
     [[nodiscard]] bool hasNext() const { return curr < bound; }
 
     void next(){
-        if(!hasNext()) throw std::out_of_range("TcpOptionsScanner out of bound");
+        using std::out_of_range;
+        if(!hasNext()) throw out_of_range("TcpOptionsScanner out of bound");
+        if(*curr == TCPOPT_EOL) throw out_of_range("TcpOptionsScanner's pointer reach end of option list");
         if(*curr == TCPOPT_NOP){
             ++curr;
         } else {
@@ -217,6 +219,7 @@ static bool clearTcpTimestamps(pkt_buff *const pktb, const variant<iphdr*, ip6_h
     if(tcpPkHdl->doff * 4 == sizeof(tcphdr)) return false;
     for(TcpOptionsScanner optScanner(tcpPkHdl); optScanner.hasNext(); optScanner.next()){
         auto const curr = optScanner.getCurrOption();
+        if(*curr == TCPOPT_EOL) return false;
         if(*curr != TCPOPT_TIMESTAMP) continue;
         const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
                 isIPv4 ?
