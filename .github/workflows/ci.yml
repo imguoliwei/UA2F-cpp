@@ -17,6 +17,9 @@ jobs:
           format: YYYYMMDDTHHmmss
           utcOffset: "+08:00"
 
+      - name: Checkout
+        uses: actions/checkout@v2
+
       - name: Compile Package Linux
         run: |
           sudo apt-fast update
@@ -29,7 +32,7 @@ jobs:
           rm libnetfilter-queue-dev_1.0.5-2_amd64.deb
           mkdir release
           cd release
-          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          cp ../src/ua2f-mix.cpp .
           g++ -std=c++17 -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lpthread
           mv ua2f-mix ua2f-mix-linux-64
           rm ua2f-mix.cpp
@@ -54,14 +57,13 @@ jobs:
         working-directory: ./openwrt-sdk-21.02.2-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64
         run: |
           cd package
-          if [ -d UA2F ]; then rm -rf ./UA2F; fi
           git clone https://github.com/Zxilly/UA2F.git
           cd ..
           make defconfig
           make package/UA2F/compile -j8 V=s
           cd package/UA2F
           rm -rf *
-          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          cp ../../../src/ua2f-mix.cpp .
           ../../staging_dir/toolchain-aarch64_generic_gcc-8.4.0_musl/bin/aarch64-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-aarch64_generic_musl/usr/include/ -L ../../staging_dir/target-aarch64_generic_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink -lpthread
           cp ua2f-mix ../../../release/ua2f-mix-aarch64_generic-openwrt-linux
           cd ../../..
@@ -82,14 +84,13 @@ jobs:
         working-directory: ./openwrt-sdk-21.02.2-ramips-mt7620_gcc-8.4.0_musl.Linux-x86_64
         run: |
           cd package
-          if [ -d UA2F ]; then rm -rf ./UA2F; fi
           git clone https://github.com/Zxilly/UA2F.git
           cd ..
           make defconfig
           make package/UA2F/compile -j8 V=s
           cd package/UA2F
           rm -rf *
-          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          cp ../../../src/ua2f-mix.cpp .
           ../../staging_dir/toolchain-mipsel_24kc_gcc-8.4.0_musl/bin/mipsel-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-mipsel_24kc_musl/usr/include/ -L ../../staging_dir/target-mipsel_24kc_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink -lpthread
           cp ua2f-mix ../../../release/ua2f-mix-mipsel_24kc-openwrt-linux
           cd ../../..
@@ -111,14 +112,13 @@ jobs:
         working-directory: ./openwrt-sdk-21.02.2-ipq40xx-generic_gcc-8.4.0_musl_eabi.Linux-x86_64
         run: |
           cd package
-          if [ -d UA2F ]; then rm -rf ./UA2F; fi
           git clone https://github.com/Zxilly/UA2F.git
           cd ..
           make defconfig
           make package/UA2F/compile -j8 V=s
           cd package/UA2F
           rm -rf *
-          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          cp ../../../src/ua2f-mix.cpp .
           ../../staging_dir/toolchain-arm_cortex-a7+neon-vfpv4_gcc-8.4.0_musl_eabi/bin/arm-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/usr/include/ -L ../../staging_dir/target-arm_cortex-a7+neon-vfpv4_musl_eabi/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink -lpthread
           cp ua2f-mix ../../../release/ua2f-mix-arm_cortex-a7_neon-vfpv4-openwrt-linux
           cd ../../..
@@ -143,14 +143,13 @@ jobs:
         working-directory: ./openwrt-sdk-21.02.2-x86-64_gcc-8.4.0_musl.Linux-x86_64
         run: |
           cd package
-          if [ -d UA2F ]; then rm -rf ./UA2F; fi
           git clone https://github.com/Zxilly/UA2F.git
           cd ..
           make defconfig
           make package/UA2F/compile -j8 V=s
           cd package/UA2F
           rm -rf *
-          wget https://raw.githubusercontent.com/imguoliwei/UA2F-cpp/main/src/ua2f-mix.cpp
+          cp ../../../src/ua2f-mix.cpp .
           ../../staging_dir/toolchain-x86_64_gcc-8.4.0_musl/bin/x86_64-openwrt-linux-g++ -std=c++17 -I ../../staging_dir/target-x86_64_musl/usr/include/ -L ../../staging_dir/target-x86_64_musl/usr/lib/ -O3 ua2f-mix.cpp -o ua2f-mix -lmnl -lnetfilter_queue -lnfnetlink -lpthread
           cp ua2f-mix ../../../release/ua2f-mix-x86_64-openwrt-linux
           cd ../../..
