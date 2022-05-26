@@ -283,7 +283,7 @@ static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayloa
 }
 
 static void mangleTcpPacket(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4, UA2F_status& currStatus, const uint32_t mark, bool& noUA){
-    auto const tcpPkPayload = static_cast<const char*>(nfq_tcp_get_payload(tcpPkHdl, pktb)); //获取 tcp载荷
+    auto const tcpPkPayload = static_cast<char*>(nfq_tcp_get_payload(tcpPkHdl, pktb)); //获取 tcp载荷
     if(tcpPkPayload == nullptr) return;
 
     if (enableMangleUa) {
