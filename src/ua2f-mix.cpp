@@ -106,7 +106,7 @@ static constexpr array<char, result_inner_len> meta_cat_ua_and_padding(const cha
     array<char, result_inner_len> result {};
     for(size_t i = 0; i < ua_length; ++i) result[i] = ua[i];
     for(size_t i = ua_length; i < total_len; ++i) result[i] = ch;
-    return move(result);
+    return result;
 }
 
 template<size_t len, size_t inner_len = len + 1>
@@ -115,7 +115,7 @@ static constexpr array<char, inner_len> meta_strset(const char ch){
 
     array<char, inner_len> result {};
     for(size_t i = 0; i < len; ++i) result[i] = ch;
-    return move(result);
+    return result;
 }
 
 static const char* strncasestr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) {
