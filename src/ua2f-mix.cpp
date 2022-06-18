@@ -40,6 +40,7 @@ using std::endl;
 using std::thread;
 using std::atomic;
 using std::array;
+using std::make_unique;
 
 static bool enableMangleUa = false;
 static bool enableMangleUaBypass = false;
@@ -58,10 +59,10 @@ public:
     long long ipId = 0;
     int uaEmpty = 0;
     int uaFrag = 0;
-    [[nodiscard]] bool shouldPrint() const {
+    [[nodiscard]] bool shouldPrint() const noexcept {
         return uaCount == httpCount * 2;
     }
-    void increaseCounter() {
+    void increaseCounter() noexcept {
         httpCount = uaCount;
     }
 private:
@@ -70,18 +71,15 @@ private:
 
 class TcpOptionsScanner {
 public:
-    explicit TcpOptionsScanner(const tcphdr * const tcpPkHdl) :
+    explicit TcpOptionsScanner(const tcphdr * const tcpPkHdl) noexcept :
     tcpOptionsStart(reinterpret_cast<const char*>(tcpPkHdl) + sizeof(tcphdr)),
     curr(tcpOptionsStart),
     bound(reinterpret_cast<const char*>(tcpPkHdl) + tcpPkHdl->doff * 4)
     {}
 
-    [[nodiscard]] bool hasNext() const { return curr < bound; }
+    [[nodiscard]] bool hasNext() const noexcept { return curr < bound && *curr != TCPOPT_EOL; }
 
-    void next(){
-        using std::out_of_range;
-        if(!hasNext()) throw out_of_range("TcpOptionsScanner out of bound");
-        if(*curr == TCPOPT_EOL) throw out_of_range("TcpOptionsScanner's pointer reach end of option list");
+    void next() noexcept {
         if(*curr == TCPOPT_NOP){
             ++curr;
         } else {
@@ -89,7 +87,7 @@ public:
         }
     }
 
-    [[nodiscard]] const char * getCurrOption() const {
+    [[nodiscard]] const char * getCurrOption() const noexcept {
         return curr;
     }
 
@@ -100,7 +98,7 @@ private:
 };
 
 template<size_t total_len, size_t ua_inner_length, size_t ua_length = ua_inner_length - 1, size_t result_inner_len = total_len + 1>
-static constexpr array<char, result_inner_len> meta_cat_ua_and_padding(const char(&ua)[ua_inner_length], const char ch){
+static constexpr array<char, result_inner_len> meta_cat_ua_and_padding(const char(&ua)[ua_inner_length], const char ch) noexcept {
     static_assert(total_len > 0 && ua_inner_length > 0 && ua_length > 0 && total_len > ua_inner_length && result_inner_len > total_len);
 
     array<char, result_inner_len> result {};
@@ -110,7 +108,7 @@ static constexpr array<char, result_inner_len> meta_cat_ua_and_padding(const cha
 }
 
 template<size_t len, size_t inner_len = len + 1>
-static constexpr array<char, inner_len> meta_strset(const char ch){
+static constexpr array<char, inner_len> meta_strset(const char ch) noexcept {
     static_assert(len > 0 && inner_len > len);
 
     array<char, inner_len> result {};
@@ -118,7 +116,7 @@ static constexpr array<char, inner_len> meta_strset(const char ch){
     return result;
 }
 
-static const char* strncasestr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) {
+static const char* strncasestr(const char * const s1, const size_t n1, const char * const s2, const size_t n2) noexcept {
     /* we need something to compare */
     if (n1 == 0 || n2 == 0)
         return nullptr;
@@ -137,7 +135,7 @@ static const char* strncasestr(const char * const s1, const size_t n1, const cha
     return nullptr;
 }
 
-static char* time2str(const int sec, char* timeStr) {
+static char* time2str(const int sec, char* timeStr) noexcept {
     if (sec <= 60) {
         sprintf(timeStr, "%d seconds", sec);
     } else if (sec <= 3600) {
@@ -152,7 +150,7 @@ static char* time2str(const int sec, char* timeStr) {
     return timeStr;
 }
 
-static int parse_attrs(const nlattr * const attr, void * const data) {
+static int parse_attrs(const nlattr * const attr, void * const data) noexcept {
     auto const tb = static_cast<const nlattr**>(data);
     auto const type = mnl_attr_get_type(attr);
     tb[type] = attr;
@@ -160,7 +158,7 @@ static int parse_attrs(const nlattr * const attr, void * const data) {
 }
 
 // http mark = 24, ukn mark = 16-20, no http mark = 23
-static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * const pktb, const uint32_t mark, const bool noUA, UA2F_status& currStatus, const mnl_socket * const nl) {
+static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * const pktb, const uint32_t mark, const bool noUA, UA2F_status& currStatus, const mnl_socket * const nl) noexcept {
     char buf[sizeof_buf];
     auto const nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
     nfq_nlmsg_verdict_put(nlh, id, NF_ACCEPT);
@@ -198,7 +196,7 @@ static void nfq_send_verdict(const int queue_num, const uint32_t id, pkt_buff * 
     ++currStatus.tcpCount;
 }
 
-static bool mangleIpv4Id(pkt_buff *const pktb){
+static bool mangleIpv4Id(pkt_buff *const pktb) noexcept {
     static atomic<decltype(iphdr::id)> currIpId = clock();
     auto const nextIpId = htons(++currIpId);
     auto const nextIpIdPtr = reinterpret_cast<const char*>(&nextIpId);
@@ -215,11 +213,10 @@ static bool mangleIpv4Id(pkt_buff *const pktb){
     }
 }
 
-static bool clearTcpTimestamps(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4){
+static bool clearTcpTimestamps(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4) noexcept {
     if(tcpPkHdl->doff * 4 == sizeof(tcphdr)) return false;
     for(TcpOptionsScanner optScanner(tcpPkHdl); optScanner.hasNext(); optScanner.next()){
         auto const curr = optScanner.getCurrOption();
-        if(*curr == TCPOPT_EOL) return false;
         if(*curr != TCPOPT_TIMESTAMP) continue;
         const unsigned int dataOffset = reinterpret_cast<const char*>(tcpPkHdl) - (
                 isIPv4 ?
@@ -247,7 +244,7 @@ static bool clearTcpTimestamps(pkt_buff *const pktb, const variant<iphdr*, ip6_h
     return false;
 }
 
-static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayload, const unsigned int tcpPkLen, pkt_buff *const pktb, const bool isIPv4, UA2F_status& currStatus) {
+static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayload, const unsigned int tcpPkLen, pkt_buff *const pktb, const bool isIPv4, UA2F_status& currStatus) noexcept {
     const unsigned int uaOffset = uaPointer - tcpPkPayload + 14; // 应该指向 UA 的第一个字符
     if (uaOffset > tcpPkLen - 2) {
         syslog(LOG_WARNING, "User-Agent has no content or too short in this packet");
@@ -282,8 +279,8 @@ static bool modify_ua(const char *const uaPointer, const char *const tcpPkPayloa
     }
 }
 
-static void mangleTcpPacket(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4, UA2F_status& currStatus, const uint32_t mark, bool& noUA){
-    auto const tcpPkPayload = static_cast<char*>(nfq_tcp_get_payload(tcpPkHdl, pktb)); //获取 tcp载荷
+static void mangleTcpPacket(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*>& ipPkHdl, tcphdr *const tcpPkHdl, const bool isIPv4, UA2F_status& currStatus, const uint32_t mark, bool& noUA) noexcept {
+    auto const tcpPkPayload = static_cast<const char*>(nfq_tcp_get_payload(tcpPkHdl, pktb)); //获取 tcp载荷
     if(tcpPkPayload == nullptr) return;
 
     if (enableMangleUa) {
@@ -304,7 +301,7 @@ static void mangleTcpPacket(pkt_buff *const pktb, const variant<iphdr*, ip6_hdr*
     }
 }
 
-static int queue_cb(const nlmsghdr * const nlh, void * const data) {
+static int queue_cb(const nlmsghdr * const nlh, void * const data) noexcept {
     nlattr *attr[NFQA_MAX + 1] = {};
     if (nfq_nlmsg_parse(nlh, attr) == MNL_CB_ERROR) {
         perror("problems parsing");
@@ -338,7 +335,7 @@ static int queue_cb(const nlmsghdr * const nlh, void * const data) {
 
     const unique_ptr<pkt_buff, function<void(pkt_buff*)>> pktb {
         pktb_alloc(isIPv4 ? AF_INET : AF_INET6, payload, pLen, 0), //IP包
-        [](pkt_buff * const p){
+        [](pkt_buff * const p) noexcept {
             if(p != nullptr) pktb_free(p);
         }
     };
@@ -405,10 +402,10 @@ static int queue_cb(const nlmsghdr * const nlh, void * const data) {
     return MNL_CB_OK;
 }
 
-static void queue_accept(const int queue_number){
+static void queue_accept(const int queue_number) noexcept {
     const unique_ptr<mnl_socket, function<void(mnl_socket*)>> nl {
         mnl_socket_open(NETLINK_NETFILTER),
-        [](mnl_socket * const p){
+        [](mnl_socket * const p) noexcept {
             if(p != nullptr) mnl_socket_close(p);
         }
     };
@@ -424,7 +421,7 @@ static void queue_accept(const int queue_number){
     }
     auto const portid = mnl_socket_get_portid(nl.get());
 
-    const unique_ptr<char[]> buf {new char[sizeof_buf]};
+    auto const buf = make_unique<char[]>(sizeof_buf);
     auto nlh = nfq_nlmsg_put(buf.get(), NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET6, NFQNL_CFG_CMD_BIND);
@@ -466,7 +463,7 @@ static void queue_accept(const int queue_number){
     }
 }
 
-int main(const int argc, const char * const * const argv) {
+int main(const int argc, const char * const * const argv) noexcept {
     if(argc < 3){
         cout << "UA2F Usage: " << argv[0] << " queue_start_number thread_number [--ua] [--ua-bypass] [--tcp-timestamps] [--ipid] [--disable-ct-mark]" << endl;
         exit(EXIT_FAILURE);
